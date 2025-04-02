@@ -10,8 +10,10 @@ destroySignatureBlock <- function(fileName, funName) {
     }
 }
 
+validLinterTags <- c("@param", "@return")  # Define valid tags for argument
+
 validateLinterTag <- function(block) {
-    validTags <- list()
+    validTags <- c()
     
     fileName <- block[[1]]
     startLine <- as.numeric(block[[2]])
@@ -21,9 +23,10 @@ validateLinterTag <- function(block) {
     blockLines <- lines[startLine:endLine]
     
     for (i in seq_along(blockLines)) {
-        match <- str_match(blockLines[i], "#\\s*(@param|@return)\\s*(\\S+)?:\\s(\\S+)") #valid tags defined here
-        if (!is.na(match[2]) && (match[2] %in% validLinterTags)) {
-            validTags <- append(validTags, match[2])
+        match <- str_match(blockLines[i], "#\\s*(@param|@return)\\s*(\\S+)?:\\s(\\S+)") # update according to validLinterTags
+        
+        if (!is.na(match[2]) && match[2] %in% validLinterTags) {
+            validTags <- c(validTags, match[2])
         }
     }
     
@@ -72,7 +75,7 @@ identifySignatureBlocks <- function(fileName) {
         validTags <- validateLinterTag(block)
         
         # Add both the signature block and its valid tags as a list element
-        signatureBlocks <- append(signatureBlocks, list(list(block = block, tags = validTags)))
+        signatureBlocks <- c(signatureBlocks, list(list(block = block, tags = validTags)))
     }
     
     return(signatureBlocks)
