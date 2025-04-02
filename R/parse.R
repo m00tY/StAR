@@ -5,7 +5,7 @@ createSignatureBlock <- function(fileName, startLine, endLine) {
 }
 
 destroySignatureBlock <- function(fileName, funName) {
-    if (exists(toString(fileName + ":" + funName), contracts)) {
+    if (exists(paste(fileName, funName, sep = ":"), envir = contracts)) {
         rm(funName, envir = contracts)
     }
 }
@@ -32,6 +32,34 @@ validateLinterTag <- function(block) {
     
     return(validTags)
 }
+
+validTypeSignatures <- c("logical", "integer", "double", "complex", "character", "raw")
+
+validateTypeSignature <- function(block) {
+    validTypes <- c()
+    
+    fileName <- block[[1]]
+    startLine <- as.numeric(block[[2]])
+    endLine <- as.numeric(block[[3]])
+    
+    lines <- readLines(fileName, warn = FALSE)
+    blockLines <- lines[startLine:endLine]
+    
+    for (i in seq_along(blockLines)) {
+        match <- str_match(blockLines[i], "#\\s*(@param|@return)\\s*(\\S+)?\\s*(logical|integer|double|complex|character|raw)") 
+        
+        if (!is.na(match[4])) {
+            validTypes <- c(validTypes, match[4])
+        } else if (is.na(match[4]) && match[2] %in% validTypeSignatures) {
+            validTypes <- c(validTypes, match[2])
+        } else {
+            validTypes <- c(validTypes, "something broke")
+        }
+    }
+    
+    return(validTypes)
+}
+
 
 identifyConsecutiveLineNumbers <- function(numbers) {
     if (length(numbers) == 0) return(list())  # Handle empty input
@@ -73,14 +101,11 @@ identifySignatureBlocks <- function(fileName) {
         
         block <- createSignatureBlock(fileName, start, end)
         validTags <- validateLinterTag(block)
+        validTypes <- validateTypeSignature(block)
         
         # Add both the signature block and its valid tags as a list element
-        signatureBlocks <- c(signatureBlocks, list(list(block = block, tags = validTags)))
+        signatureBlocks <- c(signatureBlocks, list(list(block = block, tags = validTags, types = validTypes)))
     }
     
     return(signatureBlocks)
 }
-
-# Example usage
-result <- identifySignatureBlocks("R/star.R")
-print(result)
