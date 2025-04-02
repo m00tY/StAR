@@ -6,4 +6,11 @@
 
 # @param value: int
 # @param other: dbl
-# @return result: dbl
+# @return: dbl
+f <- function(value, other) {
+    return (value+other)
+}
+
+# @param value: lgl
+# @param other: lang
+# @returrn: dbl
