@@ -57,6 +57,7 @@ validateParameterSymbols <- function(block) {
 
 validTypeSignatures <- c("logical", "integer", "double", "complex", "character", "raw")
 
+
 validateTypeSignature <- function(block) {
     validTypes <- c()
     
@@ -68,9 +69,11 @@ validateTypeSignature <- function(block) {
     blockLines <- lines[startLine:endLine]
     
     for (line in blockLines) {
-        match <- str_match(line, "#\\s*(@param|@return)\\s+\\S+:?\\s*(\\S+)")
+        match <- str_match(line, "#\\s*(@param|@return)\\s+(\\S+):?\\s*(\\S+)?")
         
-        if (!is.na(match[3]) && match[3] %in% validTypeSignatures) {
+        if (!is.na(match[4]) && match[4] %in% validTypeSignatures) {
+            validTypes <- c(validTypes, match[4])
+        } else if (is.na(match[4]) && match[3] %in% validTypeSignatures) {
             validTypes <- c(validTypes, match[3])
         }
     }
@@ -97,7 +100,8 @@ identifyConsecutiveLineNumbers <- function(numbers) {
     return(groups)
 }
 
-identifySignatureBlocks <- function(fileName) {
+# identify function type signature comment blocks and map each parameter to a given type
+createSignatureBlocks <- function(fileName) {
     signatureBlocks <- list()
     regexMatches <- c()
     
@@ -118,11 +122,106 @@ identifySignatureBlocks <- function(fileName) {
         parameterSymbols <- validateParameterSymbols(block)
         validTypes <- validateTypeSignature(block)
         
-        signatureBlocks <- c(signatureBlocks, list(list(block = block, tags = validTags, parameters = parameterSymbols, types = validTypes)))
+        # Create mapping from parameter name to type
+        paramTypeMap <- list()
+        blockLines <- lines[start:end]
+        
+        for (line in blockLines) {
+            match <- str_match(line, "#\\s*(@param|@return)\\s+(\\S+):?\\s*(\\S+)?")
+            
+            if (!is.na(match[2])) {
+                tag <- match[2]
+                name <- str_replace(match[3], ":$", "")  # <-- remove trailing colon
+                type <- match[4]
+                
+                if (!is.na(type) && type %in% validTypeSignatures) {
+                    paramTypeMap[[name]] <- list(tag = tag, type = type)
+                } else if (name %in% validTypeSignatures) {
+                    paramTypeMap[[name]] <- list(tag = tag, type = name)
+                }
+            }
+        }
+        
+        mappedSignatureBlocks <- c(signatureBlocks, list(
+            list(
+                block = block,
+                tags = validTags,
+                parameters = parameterSymbols,
+                types = validTypes,
+                mapping = paramTypeMap
+            )
+        ))
     }
     
-    return(signatureBlocks)
+    return(mappedSignatureBlocks)
 }
 
-sig <- identifySignatureBlocks("R/star.R")
-print(sig)
+identifyFunctionCalls <- function(fileName) {
+    # Parse the file and get source data
+    parsed <- parse(fileName, keep.source = TRUE)
+    sourceData <- getParseData(parsed)
+    
+    # Sort by line and column for token ordering
+    sourceData <- sourceData[order(sourceData$line1, sourceData$col1), ]
+    
+    calls <- list()
+    i <- 1 
+    
+    while (i <= nrow(sourceData)) {
+        token <- sourceData[i, ]
+        
+        if (token$token == "SYMBOL_FUNCTION_CALL" && token$text != "return") {
+            funcName <- token$text
+            startLine <- token$line1
+            
+            # Initialize parentheses counter
+            parenCount <- 0
+            callTokens <- c(funcName)  # Start the function call with the function name
+            
+            j <- i + 1
+            
+            while (j <= nrow(sourceData)) {
+                t <- sourceData[j, ]
+                callTokens <- c(callTokens, t$text)
+                
+                # Track parentheses to handle nested functions
+                if (t$text == "(") {
+                    parenCount <- parenCount + 1
+                } else if (t$text == ")") {
+                    parenCount <- parenCount - 1
+                    if (parenCount == 0) {
+                        break  # Stop once parentheses are balanced
+                    }
+                }
+                
+                j <- j + 1
+            }
+            
+            callText <- paste(callTokens, collapse = "")
+            
+            calls[[length(calls) + 1]] <- list(
+                name = funcName,
+                line = startLine,
+                call = callText
+            )
+            i <- j
+        } else {
+            i <- i + 1
+        }
+    }
+    
+    # Return the list of function calls
+    return(calls)
+}
+
+
+
+verifyFunctionCalls <- function(fileName) {
+    mappedSignatureBlocks <- createSignatureBlocks(fileName)
+    
+}
+
+#identifyFunctionCalls("R/star.R")
+#verifyFunctionCalls("R/star.R")
+
+identifyFunctionCalls("R/test.R")
