@@ -1,3 +1,6 @@
+#VSCode
+.vscode/
+
 # History files
 .Rhistory
 .Rapp.history
@@ -20,7 +23,8 @@
 
 # RStudio files
 /*.Rproj
-.Rproj.user
+*.Rproj.user
+
 # produced vignettes
 vignettes/*.html
 vignettes/*.pdf
