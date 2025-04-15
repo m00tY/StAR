@@ -51,3 +51,13 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+
+# Added by cargo
+
+/target
+.Rproj.user
+
+
+/.zig-cache
+/zig-out
