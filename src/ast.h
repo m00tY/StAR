@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#ifndef PARSE_H
-#define PARSE_H
+#ifndef AST_H
+#define AST_H
 
 struct ParseNode {
     int id;

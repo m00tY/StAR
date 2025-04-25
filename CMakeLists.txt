@@ -16,6 +16,7 @@ link_libraries(${R_LDFLAGS})
 add_executable(star
     src/main.cpp
     src/ast.cpp
+	src/contractparser.cpp
 )
 
 
