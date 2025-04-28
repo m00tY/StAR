@@ -1,4 +1,4 @@
-# @contract = (integer, integer) -> integer
+# @contract (integer, integer) -> integer
 f <- function(value, other) {
   return(value + other)
 }
