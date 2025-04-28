@@ -3,38 +3,38 @@
 #include <vector>
 #include <memory>
 
-struct Type {
-    virtual ~Type() = default;
+struct RType {
+    virtual ~RType() = default;
     virtual std::string str() const = 0;
 };
 
-using TypePtr = std::unique_ptr<Type>;
+using TypePtr = std::unique_ptr<RType>;
 
-struct TopType : Type {
-    std::string kind; // "any" or "env"
+struct TopType : RType {
+    std::string kind;
     TopType(std::string k) : kind(std::move(k)) {}
     std::string str() const override { return kind; }
 };
 
-struct ScalarType : Type {
+struct ScalarType : RType {
     std::string name;
     ScalarType(std::string n) : name(std::move(n)) {}
     std::string str() const override { return name; }
 };
 
-struct NullableType : Type {
+struct NullableType : RType {
     TypePtr inner;
     NullableType(TypePtr t) : inner(std::move(t)) {}
     std::string str() const override { return "?" + inner->str(); }
 };
 
-struct VectorType : Type {
+struct VectorType : RType {
     TypePtr element;
     VectorType(TypePtr e) : element(std::move(e)) {}
     std::string str() const override { return element->str() + "[]"; }
 };
 
-struct UnionType : Type {
+struct UnionType : RType {
     std::vector<TypePtr> types;
     std::string str() const override {
         std::string result;
@@ -46,7 +46,7 @@ struct UnionType : Type {
     }
 };
 
-struct FunctionType : Type {
+struct FunctionType : RType {
     std::vector<TypePtr> args;
     TypePtr ret;
     std::string str() const override {
@@ -60,7 +60,7 @@ struct FunctionType : Type {
     }
 };
 
-struct ListType : Type {
+struct ListType : RType {
     TypePtr element;
     ListType(TypePtr e) : element(std::move(e)) {}
     std::string str() const override {
@@ -68,7 +68,7 @@ struct ListType : Type {
     }
 };
 
-struct ClassType : Type {
+struct ClassType : RType {
     std::string name;
     ClassType(std::string n) : name(std::move(n)) {}
     std::string str() const override {
