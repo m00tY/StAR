@@ -15,7 +15,7 @@ link_libraries(${R_LDFLAGS})
 # Add source files
 add_executable(star
     src/main.cpp
-    src/ast.cpp
+    src/sourceparser.cpp
 	src/contractparser.cpp
 )
 

@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <algorithm>
 
-#include "ast.h"
+#include "sourceparser.h"
 
 
 SEXP tokenizeRSource(const char* filename) {

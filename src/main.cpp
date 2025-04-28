@@ -4,17 +4,14 @@
 #include <cstdlib>
 #include <sys/stat.h>
 
-#include "ast.h"
+#include "sourceparser.h"
 #include "contractparser.h"
 
-void collectComments(ParseNode* node, std::vector<ParseNode*>& out) {
-	if (!node) return;
-	if (node->token == "COMMENT") {
-		out.push_back(node);
-	}
-	for (ParseNode* child : node->children) {
-		collectComments(child, out);
-	}
+bool startsWith(const char* str, const char* prefix) {
+	size_t len_prefix = std::strlen(prefix);
+    size_t len_str = std::strlen(str);
+    if (len_str < len_prefix) return false;
+    return std::strncmp(str, prefix, len_prefix) == 0;
 }
 
 
@@ -35,43 +32,61 @@ void runParse(const char* filename) {
 		debugAST(node);
 	}
 
-	for (ParseNode* node : astNodes) {
-		if (node) {
-			collectComments(node, commentNodes); 
-		}
-	}
 
 
-	for (ParseNode* comment : commentNodes) {
-		std::string text = comment->token;
-		const std::string prefix = "# @contract";
+	FILE* file = std::fopen(filename, "r");
 
-		// Check if the text starts with the prefix, using find() for compatibility
-		if (text.find(prefix) == 0) {
-			std::string contractStr = text.substr(prefix.size());
+    if (!file) {
+        std::cerr << "Failed to open file: " << filename << "\n";
+    }
 
-			try {
-				// Use unique_ptr for automatic memory management
-				std::unique_ptr<Contract> contract = ContractParser(contractStr).parseContract();
+    const int MaxLineLength = 1024;
+    char buffer[MaxLineLength];
 
-				// Output the parsed contract
-				std::cout << "Parsed Contract: ";
-				contract->print(std::cout);
-				std::cout << std::endl;
-			} catch (const std::exception& ex) {
-				// Handle parsing errors
-				std::cerr << "Error parsing contract: " << ex.what() << std::endl;
-			}
-		}
-	}
+    while (std::fgets(buffer, MaxLineLength, file)) {
+        // Remove trailing newline if it exists
+        size_t len = std::strlen(buffer);
+        if (len > 0 && buffer[len - 1] == '\n') {
+            buffer[len - 1] = '\0';
+        }
 
+        if (!startsWith(buffer, "# @contract")) {
+            continue;  // Skip non-contract lines
+        }
+
+        // Strip "# @contract " prefix (length = 11)
+        const char* contract_text = buffer + 11;
+        while (*contract_text && std::isspace(*contract_text)) {
+            contract_text++;
+        }
+
+        try {
+            ContractLexer lexer(contract_text);
+            ContractParser parser(lexer);
+            Contract contract = parser.parseContract();
+
+            std::cout << "Parsed contract:\n";
+            std::cout << "Arguments:\n";
+            for (const auto& arg : contract.argumentTypes) {
+                std::cout << "  - " << arg.name << "\n";
+            }
+            std::cout << "Return Type:\n";
+            std::cout << "  - " << contract.returnType.name << "\n\n";
+        } catch (const std::exception& ex) {
+            std::cerr << "Parse error: " << ex.what() << "\n\n";
+        }
+    }
+
+    std::fclose(file);
+
+	
 }
-
 
 bool fileExists(const char* path) {
 	struct stat buffer;
 	return stat(path, &buffer) == 0;
 }
+
 
 int main(int argc, char* argv[]) {
 	if (argc != 3) {
@@ -93,7 +108,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	if (std::getenv("R_HOME") == nullptr) {
-		setenv("R_HOME", "/usr/lib64/R", 1);  // Adjust path for your R install
+		setenv("R_HOME", "/usr/lib64/R", 1);
 	}
 
 	runParse(filename);
