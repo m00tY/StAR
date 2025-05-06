@@ -1,92 +1,141 @@
+#include <R.h>
+#include <R_ext/Rdynload.h>
 #include <Rinternals.h>
+#include <Rembedded.h>
+
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
 #include <sys/stat.h>
 
-#include "sourceparser.h"
-#include "contractparser.h"
+#include "parse.h"
+#include "typelang.h"
 
 bool startsWith(const char* str, const char* prefix) {
-	size_t len_prefix = std::strlen(prefix);
-    size_t len_str = std::strlen(str);
-    if (len_str < len_prefix) return false;
-    return std::strncmp(str, prefix, len_prefix) == 0;
+	size_t lenPrefix = std::strlen(prefix);
+	size_t lenStr = std::strlen(str);
+	if (lenStr < lenPrefix) return false;
+	return std::strncmp(str, prefix, lenPrefix) == 0;
 }
 
-
 void runParse(const char* filename) {
-	SEXP roots = tokenizeRSource(filename);
+	std::cout << "Starting parsing process for file: " << filename << std::endl;
 
+	SEXP roots = tokenizeRSource(filename);
 	if (!Rf_inherits(roots, "data.frame")) {
 		std::cerr << "Error before AST generation: result is not a data.frame." << std::endl;
+		Rf_endEmbeddedR(0);
 		return;
 	}
+
+	std::cout << "Tokenization successful. Generating AST..." << std::endl;
 
 	std::vector<ParseNode*> astNodes = generateAST(roots);
 	std::cout << "Root AST Nodes Generated: " << astNodes.size() << std::endl;
 
-	std::vector<ParseNode*> commentNodes;
-
-	for (ParseNode *& node: astNodes) {
-		debugAST(node);
-	}
-
-
+	TypeParser::functionContracts.clear();
 
 	FILE* file = std::fopen(filename, "r");
+	if (!file) {
+		std::cerr << "Failed to open file: " << filename << "\n";
+		Rf_endEmbeddedR(0);
+		return;
+	}
 
-    if (!file) {
-        std::cerr << "Failed to open file: " << filename << "\n";
+	const int maxLineLength = 1024;
+	char buffer[maxLineLength];
+	Type* contractType = nullptr;
+
+	std::cout << "Reading the file line by line for contract annotations..." << std::endl;
+
+	while (std::fgets(buffer, maxLineLength, file)) {
+		size_t len = std::strlen(buffer);
+		if (len > 0 && buffer[len - 1] == '\n') {
+			buffer[len - 1] = '\0';
+		}
+
+		std::cout << "Processing line: " << buffer << std::endl;
+
+		if (startsWith(buffer, "# @contract")) {
+    const char* contractText = buffer + 11;
+    while (*contractText && std::isspace(*contractText)) ++contractText;
+
+    std::cout << "Raw Contract Line: " << contractText << std::endl;
+
+    std::string line(contractText);
+
+    // Split off function name
+    std::istringstream iss(line);
+    std::string functionName;
+    iss >> functionName; // Read 'f' or 'g'
+
+    std::string typeExpr;
+    std::getline(iss, typeExpr); // Remaining text
+
+    // Trim leading whitespace from typeExpr
+    size_t start = typeExpr.find_first_not_of(" \t");
+    if (start != std::string::npos) {
+        typeExpr = typeExpr.substr(start);
     }
 
-    const int MaxLineLength = 1024;
-    char buffer[MaxLineLength];
+    std::cout << "Function Name: " << functionName << std::endl;
+    std::cout << "Type Expression: " << typeExpr << std::endl;
 
-    while (std::fgets(buffer, MaxLineLength, file)) {
-        // Remove trailing newline if it exists
-        size_t len = std::strlen(buffer);
-        if (len > 0 && buffer[len - 1] == '\n') {
-            buffer[len - 1] = '\0';
+    try {
+        TypeParser parser(typeExpr);
+        FunctionType* funcType = dynamic_cast<FunctionType*>(parser.parseType());
+        if (!funcType) {
+            std::cerr << "Failed to parse contract for function: " << functionName << std::endl;
+            continue;
         }
 
-        if (!startsWith(buffer, "# @contract")) {
-            continue;  // Skip non-contract lines
-        }
+        TypeParser::addFunctionContract(functionName, FunctionContract{
+            .argTypes = funcType->arguments,
+            .returnType = funcType->returnType
+        });
 
-        // Strip "# @contract " prefix (length = 11)
-        const char* contract_text = buffer + 11;
-        while (*contract_text && std::isspace(*contract_text)) {
-            contract_text++;
-        }
-
-        try {
-            ContractLexer lexer(contract_text);
-            ContractParser parser(lexer);
-            Contract contract = parser.parseContract();
-
-            std::cout << "Parsed contract:\n";
-            std::cout << "Arguments:\n";
-            for (const auto& arg : contract.argumentTypes) {
-                std::cout << "  - " << arg.name << "\n";
-            }
-            std::cout << "Return Type:\n";
-            std::cout << "  - " << contract.returnType.name << "\n\n";
-        } catch (const std::exception& ex) {
-            std::cerr << "Parse error: " << ex.what() << "\n\n";
-        }
+        std::cout << "Registered contract for function " << functionName << std::endl;
+    } catch (const std::runtime_error& e) {
+        std::cerr << "Failed to parse contract: " << e.what() << std::endl;
     }
+}
 
-    std::fclose(file);
 
-	
+	}
+
+	std::cout << "for root in nodeVector: " << std::endl;
+	int index = 0;
+	for (ParseNode*& root : astNodes) {
+		std::cout << "Root Node #" << index << ": " << root->text << std::endl;
+		index++;
+	}
+	std::cout << index << " roots in nodeVector." << std::endl;
+
+	std::cout << "for node in flatAST: " << std::endl;
+	std::vector<ParseNode*> flatAST = flattenAST(astNodes);
+	index = 0;
+	for (ParseNode*& node : flatAST) {
+		std::cout << "Flat AST Node #" << index << ": " << node->text << std::endl;
+		index++;
+	}
+	std::cout << index << " nodes in flatAST." << std::endl;
+
+	std::cout << "Verifying function calls against contracts..." << std::endl;
+	for (ParseNode* node : flatAST) {
+		if (startsWith(node->text.c_str(), "exampleFunction")) {
+			std::vector<Type*> actualArgs = {new ScalarType("int"), new ScalarType("double")};
+			TypeParser::verifyFunctionCall("exampleFunction", actualArgs);
+		}
+	}
+
+	std::fclose(file);
+	std::cout << "File parsing and AST processing complete." << std::endl;
 }
 
 bool fileExists(const char* path) {
 	struct stat buffer;
 	return stat(path, &buffer) == 0;
 }
-
 
 int main(int argc, char* argv[]) {
 	if (argc != 3) {
@@ -114,5 +163,3 @@ int main(int argc, char* argv[]) {
 	runParse(filename);
 	return 0;
 }
-
-

@@ -5,14 +5,13 @@
 
 #include <iostream>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <algorithm>
+#include <functional>
 
-#include "sourceparser.h"
-
+#include "parse.h"
 
 SEXP tokenizeRSource(const char* filename) {
     int r_argc = 2;
@@ -58,12 +57,12 @@ SEXP tokenizeRSource(const char* filename) {
     SEXP gpdCall = PROTECT(Rf_lang2(Rf_install("getParseData"), exprs));
     SEXP result = PROTECT(Rf_eval(gpdCall, R_GlobalEnv));
 
-	if (!Rf_inherits(result, "data.frame")) {
-    	std::cerr << "Sanity check failed: result is not a data.frame!" << std::endl;
-    	UNPROTECT(6);  // match number of PROTECTs so far
-    	Rf_endEmbeddedR(0);
-    	return R_NilValue;
-	}
+    if (!Rf_inherits(result, "data.frame")) {
+        std::cerr << "Sanity check failed: result is not a data.frame!" << std::endl;
+        UNPROTECT(6); 
+        Rf_endEmbeddedR(0);
+        return R_NilValue;
+    }
 
     if (result == R_NilValue) {
         std::cerr << "Error: getParseData returned NULL." << std::endl;
@@ -72,8 +71,7 @@ SEXP tokenizeRSource(const char* filename) {
     } else {
         std::cout << "Parse data successfully returned as data.frame." << std::endl;
     }
-	
-	
+
     UNPROTECT(6);
     Rf_endEmbeddedR(0);
     return result;
@@ -105,13 +103,11 @@ std::vector<ParseNode*> generateAST(SEXP parsedData) {
         else if (name == "text") textIndex = i;
     }
 
-    // If any required column is missing, print an error and return
     if (idIndex < 0 || parentIndex < 0 || tokenIndex < 0 || textIndex < 0) {
         std::cerr << "Error: Could not find required columns in parse data." << std::endl;
         return roots;
     }
 
-    // Extract the columns from the data.frame
     SEXP idCol = VECTOR_ELT(parsedData, idIndex);
     SEXP parentCol = VECTOR_ELT(parsedData, parentIndex);
     SEXP tokenCol = VECTOR_ELT(parsedData, tokenIndex);
@@ -120,9 +116,15 @@ std::vector<ParseNode*> generateAST(SEXP parsedData) {
     for (int i = 0; i < nrows; ++i) {
         auto* node = new ParseNode;
         node->id = INTEGER(idCol)[i];
-        node->parent = INTEGER(parentCol)[i];
+        node->parent = INTEGER(parentCol)[i];  // could be R_NaInt
         node->token = CHAR(STRING_ELT(tokenCol, i));
         node->text = CHAR(STRING_ELT(textCol, i));
+
+        if (node->token == "SYMBOL_FUNCTION_CALL") {
+            node->addArgument("arg1");
+            node->addArgument("arg2");
+        }
+
         nodeMap[node->id] = node;
     }
 
@@ -132,28 +134,66 @@ std::vector<ParseNode*> generateAST(SEXP parsedData) {
     }
 
     std::sort(orderedNodes.begin(), orderedNodes.end(), [](ParseNode* a, ParseNode* b) {
-        return a->id < b->id; 
+        return a->id < b->id;
     });
 
-    // Link parent-child relationships
     for (auto* node : orderedNodes) {
-        if (node->parent == 0) {
-            roots.push_back(node); 
-		} else {
+        // Treat NA or 0 as root-level
+        if (node->parent == 0 || node->parent == R_NaInt) {
+            roots.push_back(node);
+        } else {
             auto it = nodeMap.find(node->parent);
             if (it != nodeMap.end()) {
-                it->second->children.push_back(node);  
+                it->second->children.push_back(node);
+            } else {
+                // orphaned node — attach as root
+                roots.push_back(node);
             }
         }
     }
 
-    return roots;  
+    return roots;
 }
 
 void debugAST(ParseNode* node, int depth) {
-    std::cout << std::string(depth * 2, ' ') << node->token << ": " << node->text << std::endl;
+    std::string indent(depth * 2, ' ');
+
+    if (node->token == "COMMENT") {
+        std::cout << indent << "[COMMENT] " << node->text << std::endl;
+    } else {
+        std::cout << indent << node->token << ": " << node->text << std::endl;
+    }
+
+    if (!node->arguments.empty()) {
+        std::cout << indent << "  Arguments: ";
+        for (const auto& arg : node->arguments) {
+            std::cout << arg << " ";
+        }
+        std::cout << std::endl;
+    }
+
     for (ParseNode* child : node->children) {
         debugAST(child, depth + 1);
     }
 }
 
+std::vector<ParseNode*> flattenAST(const std::vector<ParseNode*>& roots) {
+    std::vector<ParseNode*> ordered;
+
+    std::function<void(ParseNode*)> collect = [&](ParseNode* node) {
+        ordered.push_back(node);
+        for (ParseNode* child : node->children) {
+            collect(child);
+        }
+    };
+
+    for (ParseNode* root : roots) {
+        collect(root);
+    }
+
+    std::sort(ordered.begin(), ordered.end(), [](ParseNode* a, ParseNode* b) {
+        return a->id < b->id;
+    });
+
+    return ordered;
+}
