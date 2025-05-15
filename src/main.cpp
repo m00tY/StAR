@@ -11,6 +11,9 @@
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
+#include <fcntl.h>
+#include <cerrno>
+#include <unistd.h> 
 #include <sys/stat.h>
 #include <algorithm>
 #include <cctype>
@@ -56,7 +59,7 @@ std::vector<ParseNode*> generateASTFromSource(const std::string& code) {
     return ast;
 }
 
-void run(const char* filename) {
+void run(const char* filename, const char* outputPath) {
     std::cout << "Starting parsing process for file: " << filename << std::endl;
 
     SEXP tokens = tokenizeRSource(filename);
@@ -151,10 +154,16 @@ void run(const char* filename) {
     std::vector<StatementRange> statementRanges = extractStatements(flatAST);
     std::vector<std::string> statementStrings = getStatementStrings(flatAST, statementRanges);
 
-    for (const auto& str : statementStrings) {
+	std::cout << "Writing to file: " << outputPath << std::endl;
+    
+    int fd = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+	for (const auto& str : statementStrings) {
         std::cout << str << std::endl;
+		write(fd, str.c_str(), strlen(str.c_str()));
     }
 
+	close(fd);
     Rf_endEmbeddedR(0);
 }
 
@@ -165,16 +174,18 @@ bool fileExists(const char* path) {
 }
 
 int main(int argc, char* argv[]) {
-	if (argc != 3) {
+	if (argc != 5) {
 		std::cerr << "Usage: " << argv[0] << " run <filename>" << std::endl;
 		return 1;
 	}
 
-	const char* flag = argv[1];
+	const char* commandFlag = argv[1];
 	const char* filename = argv[2];
+	const char* outputFlag = argv[3];
+	const char* outputPath = argv[4];
 
-	if (strcmp(flag, "run") != 0) {
-		std::cerr << "Error: Unknown flag '" << flag << "'" << std::endl;
+	if (strcmp(commandFlag, "run") != 0) {
+		std::cerr << "Error: Unknown flag '" << commandFlag << "'" << std::endl;
 		return 1;
 	}
 
@@ -183,10 +194,15 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
+	if (strcmp(outputFlag, "-o") != 0) {
+		std::cerr << "Error: Unknown flag '" << outputFlag << "'" << std::endl;
+		return 1;
+	}
+
 	if (std::getenv("R_HOME") == nullptr) {
 		setenv("R_HOME", "/usr/lib64/R", 1);
 	}
 
-	run(filename);
+	run(filename, outputPath);
 	return 0;
 }
