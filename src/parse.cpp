@@ -73,7 +73,7 @@ SEXP tokenizeRSource(const char* filename) {
     }
 
     UNPROTECT(6);
-    Rf_endEmbeddedR(0);
+    
     return result;
 }
 
@@ -116,7 +116,7 @@ std::vector<ParseNode*> generateAST(SEXP parsedData) {
     for (int i = 0; i < nrows; ++i) {
         auto* node = new ParseNode;
         node->id = INTEGER(idCol)[i];
-        node->parent = INTEGER(parentCol)[i];  // could be R_NaInt
+        node->parent = INTEGER(parentCol)[i];
         node->token = CHAR(STRING_ELT(tokenCol, i));
         node->text = CHAR(STRING_ELT(textCol, i));
 
@@ -138,7 +138,6 @@ std::vector<ParseNode*> generateAST(SEXP parsedData) {
     });
 
     for (auto* node : orderedNodes) {
-        // Treat NA or 0 as root-level
         if (node->parent == 0 || node->parent == R_NaInt) {
             roots.push_back(node);
         } else {
@@ -146,7 +145,6 @@ std::vector<ParseNode*> generateAST(SEXP parsedData) {
             if (it != nodeMap.end()) {
                 it->second->children.push_back(node);
             } else {
-                // orphaned node — attach as root
                 roots.push_back(node);
             }
         }
@@ -197,3 +195,5 @@ std::vector<ParseNode*> flattenAST(const std::vector<ParseNode*>& roots) {
 
     return ordered;
 }
+
+

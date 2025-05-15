@@ -2,135 +2,162 @@
 #include <R_ext/Rdynload.h>
 #include <Rinternals.h>
 #include <Rembedded.h>
+#include <R_ext/Parse.h>
 
+#undef length
+
+#include <fstream>
+#include <sstream>
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
 #include <sys/stat.h>
+#include <algorithm>
+#include <cctype>
 
 #include "parse.h"
 #include "typelang.h"
+#include "gensource.h"
 
-bool startsWith(const char* str, const char* prefix) {
+bool startsWith(const std::string& str, const char* prefix) {
 	size_t lenPrefix = std::strlen(prefix);
-	size_t lenStr = std::strlen(str);
-	if (lenStr < lenPrefix) return false;
-	return std::strncmp(str, prefix, lenPrefix) == 0;
+	if (str.size() < lenPrefix) return false;
+	return std::strncmp(str.c_str(), prefix, lenPrefix) == 0;
 }
 
-void runParse(const char* filename) {
-	std::cout << "Starting parsing process for file: " << filename << std::endl;
+std::vector<ParseNode*> parseCheckExprFromString(const std::string& code) {
+	SEXP expr, status;
+	PROTECT(expr = Rf_mkString(code.c_str()));
 
-	SEXP roots = tokenizeRSource(filename);
-	if (!Rf_inherits(roots, "data.frame")) {
-		std::cerr << "Error before AST generation: result is not a data.frame." << std::endl;
-		Rf_endEmbeddedR(0);
-		return;
+	ParseStatus parseStatus;
+	SEXP parsed = PROTECT(R_ParseVector(expr, -1, &parseStatus, R_NilValue));
+
+	if (parseStatus != PARSE_OK) {
+		UNPROTECT(2);
+		throw std::runtime_error("Failed to parse injected type check expression.");
 	}
 
-	std::cout << "Tokenization successful. Generating AST..." << std::endl;
+	SEXP firstExpr = VECTOR_ELT(parsed, 0);
+	std::vector<ParseNode*> nodes = generateAST(firstExpr);
+	UNPROTECT(2);
+	return nodes;
+}
 
-	std::vector<ParseNode*> astNodes = generateAST(roots);
-	std::cout << "Root AST Nodes Generated: " << astNodes.size() << std::endl;
+SEXP tokenizeRString(const char* code) {
+    SEXP expr = PROTECT(Rf_mkString(code));
+    SEXP srcfile = PROTECT(R_ParseVector(expr, -1, NULL, R_NilValue));
+    UNPROTECT(2);
+    return srcfile;
+}
 
-	TypeParser::functionContracts.clear();
+std::vector<ParseNode*> generateASTFromSource(const std::string& code) {
+    SEXP tokens = tokenizeRString(code.c_str());
+    std::vector<ParseNode*> ast = generateAST(tokens);
+    return ast;
+}
 
-	FILE* file = std::fopen(filename, "r");
-	if (!file) {
-		std::cerr << "Failed to open file: " << filename << "\n";
-		Rf_endEmbeddedR(0);
-		return;
-	}
+void run(const char* filename) {
+    std::cout << "Starting parsing process for file: " << filename << std::endl;
 
-	const int maxLineLength = 1024;
-	char buffer[maxLineLength];
-	Type* contractType = nullptr;
-
-	std::cout << "Reading the file line by line for contract annotations..." << std::endl;
-
-	while (std::fgets(buffer, maxLineLength, file)) {
-		size_t len = std::strlen(buffer);
-		if (len > 0 && buffer[len - 1] == '\n') {
-			buffer[len - 1] = '\0';
-		}
-
-		std::cout << "Processing line: " << buffer << std::endl;
-
-		if (startsWith(buffer, "# @contract")) {
-    const char* contractText = buffer + 11;
-    while (*contractText && std::isspace(*contractText)) ++contractText;
-
-    std::cout << "Raw Contract Line: " << contractText << std::endl;
-
-    std::string line(contractText);
-
-    // Split off function name
-    std::istringstream iss(line);
-    std::string functionName;
-    iss >> functionName; // Read 'f' or 'g'
-
-    std::string typeExpr;
-    std::getline(iss, typeExpr); // Remaining text
-
-    // Trim leading whitespace from typeExpr
-    size_t start = typeExpr.find_first_not_of(" \t");
-    if (start != std::string::npos) {
-        typeExpr = typeExpr.substr(start);
+    SEXP tokens = tokenizeRSource(filename);
+    if (!Rf_inherits(tokens, "data.frame")) {
+        std::cerr << "Error: tokenization did not return a data.frame." << std::endl;
+        return;
     }
 
-    std::cout << "Function Name: " << functionName << std::endl;
-    std::cout << "Type Expression: " << typeExpr << std::endl;
+    std::vector<ParseNode*> rootNodes = generateAST(tokens);
+    std::vector<ParseNode*> flatAST = flattenAST(rootNodes);
 
-    try {
-        TypeParser parser(typeExpr);
-        FunctionType* funcType = dynamic_cast<FunctionType*>(parser.parseType());
-        if (!funcType) {
-            std::cerr << "Failed to parse contract for function: " << functionName << std::endl;
-            continue;
+    TypeParser::functionContracts.clear();
+
+    // --- Extract @contract annotations from file comments
+    std::ifstream file(filename);
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!startsWith(line, "# @contract")) continue;
+
+        // Remove the "# @contract" prefix
+        std::string contractLine = line.substr(11);
+        contractLine.erase(0, contractLine.find_first_not_of(" \t"));
+
+        std::istringstream iss(contractLine);
+        std::string functionName;
+        iss >> functionName;
+
+        std::string typeExpr;
+        std::getline(iss, typeExpr);
+        typeExpr.erase(0, typeExpr.find_first_not_of(" \t"));
+
+        try {
+            TypeParser parser(typeExpr);
+            FunctionType* funcType = dynamic_cast<FunctionType*>(parser.parseType());
+            if (funcType) {
+                TypeParser::addFunctionContract(functionName, FunctionContract{
+                    .argTypes = funcType->arguments,
+                    .returnType = funcType->returnType
+                });
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Contract parse error: " << e.what() << std::endl;
         }
-
-        TypeParser::addFunctionContract(functionName, FunctionContract{
-            .argTypes = funcType->arguments,
-            .returnType = funcType->returnType
-        });
-
-        std::cout << "Registered contract for function " << functionName << std::endl;
-    } catch (const std::runtime_error& e) {
-        std::cerr << "Failed to parse contract: " << e.what() << std::endl;
     }
+
+    // --- Inject runtime type checks inside function bodies (WIP)
+    for (size_t i = 0; i + 4 < flatAST.size(); ++i) {
+        if (!flatAST[i]->text.empty() &&
+            flatAST[i + 1]->text == "<-" &&
+            flatAST[i + 2]->text == "function" &&
+            flatAST[i + 3]->text == "(") {
+
+            std::string funcName = flatAST[i]->text;
+            auto it = TypeParser::functionContracts.find(funcName);
+            if (it == TypeParser::functionContracts.end()) continue;
+
+            const FunctionContract& contract = it->second;
+            std::vector<std::string> argNames;
+
+            size_t j = i + 4;
+            while (j < flatAST.size() && flatAST[j]->text != ")") {
+                if (!flatAST[j]->text.empty() && flatAST[j]->text != ",") {
+                    argNames.push_back(flatAST[j]->text);
+                }
+                ++j;
+            }
+            if (j >= flatAST.size() || flatAST[j]->text != ")") continue;
+
+            size_t bodyStart = j + 1;
+            while (bodyStart < flatAST.size() && flatAST[bodyStart]->text != "{") {
+                ++bodyStart;
+            }
+            if (bodyStart >= flatAST.size()) continue;
+
+            ++bodyStart;
+
+            // Insert stopifnot(...) checks for each argument
+            for (size_t k = 0; k < argNames.size() && k < contract.argTypes.size(); ++k) {
+                std::string typeStr = contract.argTypes[k]->toString();
+
+                std::string checkExpr = "stopifnot(typeof(" + argNames[k] + ") == \"" + typeStr + "\")";
+
+                std::vector<ParseNode*> checkNodes = generateASTFromSource(checkExpr);
+
+                flatAST.insert(flatAST.begin() + bodyStart, checkNodes.begin(), checkNodes.end());
+                bodyStart += checkNodes.size();
+            }
+        }
+    }
+
+    // --- Re-extract statements and reconstruct source code (WIP)
+    std::vector<StatementRange> statementRanges = extractStatements(flatAST);
+    std::vector<std::string> statementStrings = getStatementStrings(flatAST, statementRanges);
+
+    for (const auto& str : statementStrings) {
+        std::cout << str << std::endl;
+    }
+
+    Rf_endEmbeddedR(0);
 }
 
-
-	}
-
-	std::cout << "for root in nodeVector: " << std::endl;
-	int index = 0;
-	for (ParseNode*& root : astNodes) {
-		std::cout << "Root Node #" << index << ": " << root->text << std::endl;
-		index++;
-	}
-	std::cout << index << " roots in nodeVector." << std::endl;
-
-	std::cout << "for node in flatAST: " << std::endl;
-	std::vector<ParseNode*> flatAST = flattenAST(astNodes);
-	index = 0;
-	for (ParseNode*& node : flatAST) {
-		std::cout << "Flat AST Node #" << index << ": " << node->text << std::endl;
-		index++;
-	}
-	std::cout << index << " nodes in flatAST." << std::endl;
-
-	std::cout << "Verifying function calls against contracts..." << std::endl;
-	for (ParseNode* node : flatAST) {
-		if (startsWith(node->text.c_str(), "exampleFunction")) {
-			std::vector<Type*> actualArgs = {new ScalarType("int"), new ScalarType("double")};
-			TypeParser::verifyFunctionCall("exampleFunction", actualArgs);
-		}
-	}
-
-	std::fclose(file);
-	std::cout << "File parsing and AST processing complete." << std::endl;
-}
 
 bool fileExists(const char* path) {
 	struct stat buffer;
@@ -139,14 +166,14 @@ bool fileExists(const char* path) {
 
 int main(int argc, char* argv[]) {
 	if (argc != 3) {
-		std::cerr << "Usage: " << argv[0] << " -p <filename>" << std::endl;
+		std::cerr << "Usage: " << argv[0] << " run <filename>" << std::endl;
 		return 1;
 	}
 
 	const char* flag = argv[1];
 	const char* filename = argv[2];
 
-	if (strcmp(flag, "-p") != 0) {
+	if (strcmp(flag, "run") != 0) {
 		std::cerr << "Error: Unknown flag '" << flag << "'" << std::endl;
 		return 1;
 	}
@@ -160,6 +187,6 @@ int main(int argc, char* argv[]) {
 		setenv("R_HOME", "/usr/lib64/R", 1);
 	}
 
-	runParse(filename);
+	run(filename);
 	return 0;
 }

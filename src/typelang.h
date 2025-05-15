@@ -125,13 +125,21 @@ struct FunctionContract {
     Type* returnType;
 };
 
+struct ASTNode {
+    std::string type;
+    std::string name;
+    std::vector<Type*> argumentTypes;
+};
+
 class TypeParser {
 public:
     explicit TypeParser(const std::string& input);
     static void addContract(const std::string& functionName, const std::vector<Type*>& argumentTypes, Type* returnType);
 	static void addFunctionContract(const std::string& name, const FunctionContract& contract);
-    static void verifyFunctionCall(const std::string& functionName, const std::vector<Type*>& argumentTypes);
+    static void verifyFunctionCalls(const std::vector<ASTNode>& rootNodes);
 	static bool typesAreCompatible(Type* actualType, Type* expectedType);
+	static void verifySingleFunctionCall(const std::string& functionName, const std::vector<Type*>& argumentTypes);
+	
 
 	Type* parseType();
 	std::vector<Type*> parseArgumentList();

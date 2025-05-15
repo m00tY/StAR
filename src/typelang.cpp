@@ -55,14 +55,46 @@ TypeParser::TypeParser(const std::string& input) : input(input), pos(0) {}
 std::unordered_map<std::string, FunctionContract> TypeParser::functionContracts;
 
 Type* TypeParser::parseType() {
-    Type* left = parsePrimary();
+    skipWhitespace();
+    std::cout << "[parseType] pos=" << pos 
+              << ", remaining='" << input.substr(pos, std::min<size_t>(20, input.size() - pos)) 
+              << "'\n";
+
+    if (match('(')) {
+        std::vector<Type*> args = parseArgumentList();
+        expect(')');
+        expect("->");
+        Type* ret = parseType();
+        return new FunctionType(args, ret);
+    }
+
+    if (consume("list<")) {
+        Type* inner = parseType();
+        expect('>');
+        return new ListType(inner);
+    }
+
+    if (consume("class<")) {
+        std::vector<std::string> ids;
+        ids.push_back(parseIdentifier());
+        while (match(',')) {
+            ids.push_back(parseIdentifier());
+        }
+        expect('>');
+        return new ClassType(ids);
+    }
+
+    Type* base = new ScalarType(parseIdentifier());
+
     if (match('?')) {
-        return new NullableType(left);
+        base = new NullableType(base);
     }
-    if (match('[') && match(']')) {
-        return new VectorType(left);
+    if (match('[')) {
+        expect(']');
+        base = new VectorType(base);
     }
-    return parseUnion(left);
+
+    return parseUnion(base);
 }
 
 Type* TypeParser::parsePrimary() {
@@ -173,33 +205,38 @@ void TypeParser::addFunctionContract(const std::string& name, const FunctionCont
     functionContracts[name] = contract;
 }
 
-void TypeParser::verifyFunctionCall(const std::string& functionName, const std::vector<Type*>& actualArgs) {
-    auto contractIt = functionContracts.find(functionName);
-    if (contractIt == functionContracts.end()) {
-        std::cerr << "Contract for function " << functionName << " not found.\n";
-        return;
-    }
+void TypeParser::verifyFunctionCalls(const std::vector<ASTNode>& rootNodes) {
+    for (const auto& node : rootNodes) {
+        if (node.type == "function_call") {
+            std::string functionName = node.name;
+            std::vector<Type*> argumentTypes = node.argumentTypes;
 
-    const FunctionContract& contract = contractIt->second;
-
-    if (contract.argTypes.size() != actualArgs.size()) {
-        std::cerr << "Argument count mismatch for function " << functionName << ". Expected "
-                  << contract.argTypes.size() << ", got " << actualArgs.size() << ".\n";
-        return;
-    }
-
-    for (size_t i = 0; i < actualArgs.size(); ++i) {
-        if (!typesAreCompatible(actualArgs[i], contract.argTypes[i])) {
-            std::cerr << "Argument type mismatch for function " << functionName << " at position "
-                      << i + 1 << ". Expected " << contract.argTypes[i]->toString() << ", got "
-                      << actualArgs[i]->toString() << ".\n";
+            TypeParser::verifySingleFunctionCall(functionName, argumentTypes);
         }
     }
+}
 
-    // Check return type
-    if (!typesAreCompatible(actualArgs.back(), contract.returnType)) {
-        std::cerr << "Return type mismatch for function " << functionName << ". Expected "
-                  << contract.returnType->toString() << ", got "
-                  << actualArgs.back()->toString() << ".\n";
+void TypeParser::verifySingleFunctionCall(const std::string& functionName, const std::vector<Type*>& argumentTypes) {
+    auto it = functionContracts.find(functionName);
+    if (it == functionContracts.end()) {
+        std::cerr << "Warning: No contract for function: " << functionName << std::endl;
+        return;
+    }
+
+    const FunctionContract& contract = it->second;
+
+    if (contract.argTypes.size() != argumentTypes.size()) {
+        std::cerr << "Contract arity mismatch for " << functionName << ": expected "
+                  << contract.argTypes.size() << ", got " << argumentTypes.size() << std::endl;
+        return;
+    }
+
+    for (size_t i = 0; i < argumentTypes.size(); ++i) {
+        if (contract.argTypes[i]->toString() != argumentTypes[i]->toString()) {
+            std::cerr << "Type mismatch in " << functionName << " argument " << i << ": expected "
+                      << contract.argTypes[i]->toString() << ", got "
+                      << argumentTypes[i]->toString() << std::endl;
+        }
     }
 }
+
