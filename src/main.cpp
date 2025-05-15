@@ -106,30 +106,39 @@ void run(const char* filename, const char* outputPath) {
     }
 
     // --- Inject runtime type checks inside function bodies (WIP)
+    if (flatAST.size() < 5) {
+        std::cerr << "Error: flatAST does not have enough elements to process function definitions." << std::endl;
+        return;
+    }
+
     for (size_t i = 0; i + 4 < flatAST.size(); ++i) {
-        if (!flatAST[i]->text.empty() &&
-            flatAST[i + 1]->text == "<-" &&
+        if (!flatAST[i]) {
+            std::cerr << "Error: flatAST[" << i << "] is null." << std::endl;
+            continue;
+        }
+        // Check for function definition pattern
+        if (flatAST[i + 1]->text == "<-" &&
             flatAST[i + 2]->text == "function" &&
             flatAST[i + 3]->text == "(") {
 
             std::string funcName = flatAST[i]->text;
             auto it = TypeParser::functionContracts.find(funcName);
             if (it == TypeParser::functionContracts.end()) continue;
-
             const FunctionContract& contract = it->second;
-            std::vector<std::string> argNames;
 
+            // Collect argument names
+            std::vector<std::string> argNames;
             size_t j = i + 4;
-            while (j < flatAST.size() && flatAST[j]->text != ")") {
-                if (!flatAST[j]->text.empty() && flatAST[j]->text != ",") {
+            while (j < flatAST.size() && flatAST[j] != nullptr && flatAST[j]->text != ")") {
+                if (flatAST[j] != nullptr && !flatAST[j]->text.empty() && flatAST[j]->text != ",") {
                     argNames.push_back(flatAST[j]->text);
                 }
                 ++j;
             }
-            if (j >= flatAST.size() || flatAST[j]->text != ")") continue;
+            if (j >= flatAST.size() || !flatAST[j] || flatAST[j]->text != ")") continue;
 
             size_t bodyStart = j + 1;
-            while (bodyStart < flatAST.size() && flatAST[bodyStart]->text != "{") {
+            while (bodyStart < flatAST.size() && flatAST[bodyStart] != nullptr && flatAST[bodyStart]->text != "{") {
                 ++bodyStart;
             }
             if (bodyStart >= flatAST.size()) continue;
@@ -137,15 +146,26 @@ void run(const char* filename, const char* outputPath) {
             ++bodyStart;
 
             // Insert stopifnot(...) checks for each argument
+            std::vector<std::pair<size_t, std::vector<ParseNode*>>> insertions;
+
             for (size_t k = 0; k < argNames.size() && k < contract.argTypes.size(); ++k) {
+                if (contract.argTypes[k] == nullptr) {
+                    std::cerr << "Error: Argument type at index " << k << " is null for function " << funcName << std::endl;
+                    continue;
+                }
+
                 std::string typeStr = contract.argTypes[k]->toString();
 
                 std::string checkExpr = "stopifnot(typeof(" + argNames[k] + ") == \"" + typeStr + "\")";
 
                 std::vector<ParseNode*> checkNodes = generateASTFromSource(checkExpr);
 
-                flatAST.insert(flatAST.begin() + bodyStart, checkNodes.begin(), checkNodes.end());
-                bodyStart += checkNodes.size();
+                insertions.emplace_back(bodyStart, checkNodes);
+            }
+
+            for (const auto& insertion : insertions) {
+                flatAST.insert(flatAST.begin() + insertion.first, insertion.second.begin(), insertion.second.end());
+                bodyStart += insertion.second.size();
             }
         }
     }
@@ -154,16 +174,16 @@ void run(const char* filename, const char* outputPath) {
     std::vector<StatementRange> statementRanges = extractStatements(flatAST);
     std::vector<std::string> statementStrings = getStatementStrings(flatAST, statementRanges);
 
-	std::cout << "Writing to file: " << outputPath << std::endl;
+    std::cout << "Writing to file: " << outputPath << std::endl;
     
     int fd = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
-	for (const auto& str : statementStrings) {
+    for (const auto& str : statementStrings) {
         std::cout << str << std::endl;
-		write(fd, str.c_str(), strlen(str.c_str()));
+        write(fd, str.c_str(), strlen(str.c_str()));
     }
 
-	close(fd);
+    close(fd);
     Rf_endEmbeddedR(0);
 }
 

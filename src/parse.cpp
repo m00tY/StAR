@@ -195,5 +195,3 @@ std::vector<ParseNode*> flattenAST(const std::vector<ParseNode*>& roots) {
 
     return ordered;
 }
-
-
