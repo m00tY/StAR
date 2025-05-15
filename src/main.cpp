@@ -179,9 +179,18 @@ void run(const char* filename, const char* outputPath) {
     int fd = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
     for (const auto& str : statementStrings) {
-        std::cout << str << std::endl;
-        write(fd, str.c_str(), strlen(str.c_str()));
-    }
+		std::string trimmed = str;
+		trimmed.erase(std::remove_if(trimmed.begin(), trimmed.end(), ::isspace), trimmed.end());
+	
+		std::string line = str;
+		if (!trimmed.empty()) {
+			line += ";";
+		}
+		line += "\n";
+	
+		std::cout << line;
+		write(fd, line.c_str(), line.size());
+	}
 
     close(fd);
     Rf_endEmbeddedR(0);
