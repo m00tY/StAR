@@ -55,34 +55,28 @@ std::vector<std::string> getStatementStrings(const std::vector<ParseNode*> nodes
             if (i > range.start) oss << " ";
             oss << nodes[i]->text;
         }
+
+        // Add a newline after each statement to mimic real R code
+        oss << "\n";
         result.push_back(oss.str());
     }
 
     return result;
 }
 
-
-std::string generateTypeCheck(const std::string& argName, const std::string& typeName) {
-    enum TypeEnum { INT, DOUBLE, LOGICAL, UNKNOWN };
-
-    static const std::unordered_map<std::string, TypeEnum> typeMap = {
-        {"integer", INT},
-        {"double", DOUBLE},
-        {"logical", LOGICAL},
-    };
-
-    auto it = typeMap.find(typeName);
-    TypeEnum t = (it != typeMap.end()) ? it->second : UNKNOWN;
-
-    switch (t) {
-        case INT:
-            return "if (!is.integer(" + argName + ")) stop(\"Argument '" + argName + "' must be integer\")";
-        case DOUBLE:
-            return "if (!is.double(" + argName + ")) stop(\"Argument '" + argName + "' must be double\")";
-        case LOGICAL:
-            return "if (!is.logical(" + argName + ")) stop(\"Argument '" + argName + "' must be logical\")";
-        default:
-            return "";
+std::string generateTypeCheck(const std::string& arg, const std::string& typeStr) {
+    if (typeStr == "integer") {
+        return "if (!is.integer(" + arg + ")) stop(\"" + arg + " must be integer\")";
+    } else if (typeStr == "double") {
+        return "if (!is.double(" + arg + ")) stop(\"" + arg + " must be double\")";
+    } else if (typeStr == "logical") {
+        return "if (!is.logical(" + arg + ")) stop(\"" + arg + " must be logical\")";
+    } else if (typeStr == "character") {
+        return "if (!is.character(" + arg + ")) stop(\"" + arg + " must be character\")";
+    } else if (typeStr == "integer[]") {
+        return "if (!is.integer(" + arg + ")) stop(\"" + arg + " must be integer[]\")";
+    } else {
+        std::cerr << "Warning: unrecognized type '" << typeStr << "' for arg " << arg << std::endl;
+        return "";
     }
 }
-
