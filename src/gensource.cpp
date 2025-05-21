@@ -148,15 +148,33 @@ void injectInputTypeChecks(const char *outputPath) {
     std::cout << "Type checks successfully injected into file: " << outputPath << std::endl;
 }
 
-std::string extractReturnExpression(const std::string& returnLine) {
-    size_t returnPos = returnLine.find("return");
+std::string extractReturnExpression(const std::vector<std::string>& lines, size_t returnLineIndex) {
+    std::cerr << "Extracting return expression from line " << returnLineIndex << ": " << lines[returnLineIndex] << std::endl;
+
+    size_t returnPos = lines[returnLineIndex].find("return");
     if (returnPos != std::string::npos) {
         size_t exprStart = returnPos + 6; // Length of "return"
-        while (exprStart < returnLine.size() && std::isspace(returnLine[exprStart])) {
+        while (exprStart < lines[returnLineIndex].size() && std::isspace(lines[returnLineIndex][exprStart])) {
             ++exprStart;
         }
-        return returnLine.substr(exprStart);
+
+        // Start building the return expression
+        std::string returnExpression = lines[returnLineIndex].substr(exprStart);
+
+        // Check if the expression spans multiple lines
+        size_t currentLine = returnLineIndex + 1;
+        while (currentLine < lines.size() && lines[currentLine].find("}") == std::string::npos) {
+            returnExpression += " " + lines[currentLine];
+            ++currentLine;
+        }
+
+        // Trim any trailing whitespace
+        returnExpression.erase(returnExpression.find_last_not_of(" \t\n\r") + 1);
+
+        std::cerr << "Extracted return expression: " << returnExpression << std::endl;
+        return returnExpression;
     }
+    std::cerr << "No return expression found on line: " << returnLineIndex << std::endl;
     return "";
 }
 
@@ -187,37 +205,81 @@ void generateOutputTypeChecks(const char *outputPath) {
         std::smatch match;
         if (std::regex_search(lines[i], match, std::regex("^(\\w+)\\s*<-\\s*function\\s*\\(([^)]*)\\)"))) {
             std::string functionName = match[1];
+            std::cerr << "Processing function: " << functionName << std::endl;
 
             // Look for a contract for the function
             auto it = TypeParser::functionContracts.find(functionName);
             if (it != TypeParser::functionContracts.end()) {
                 const FunctionContract &contract = it->second;
+                std::cerr << "Found contract for function: " << functionName << std::endl;
 
                 // Write the function declaration line
                 outFile << lines[i] << "\n";
 
                 // Process the function block
                 size_t j = i + 1;
-                while (j < lines.size() && lines[j].find("}") == std::string::npos) {
-                    if (lines[j].find("return") != std::string::npos) {
-                        std::string returnExpression = extractReturnExpression(lines[j]);
-                        std::string returnType = contract.returnType->toString();
+                bool returnFound = false;
+                int braceDepth = 0;
 
-                        outFile << "outputTypecheckExpression <- (" << returnExpression << ")\n";
-                        outFile << "if (!is." << returnType << "(outputTypecheckExpression)) ";
-                        outFile << "stop('Output must be of type " << returnType << "')\n";
-                    }
+                // Find the opening brace of the function
+                while (j < lines.size() && lines[j].find("{") == std::string::npos) {
                     outFile << lines[j] << "\n";
                     ++j;
                 }
 
-                // Write the closing brace
-                if (j < lines.size()) {
+                if (j < lines.size() && lines[j].find("{") != std::string::npos) {
+                    ++braceDepth; // Entering the function block
                     outFile << lines[j] << "\n";
+                    ++j;
+                }
+
+                while (j < lines.size() && braceDepth > 0) {
+                    std::cerr << "Inspecting line " << j << ": " << lines[j] << std::endl;
+
+                    // Adjust brace depth
+                    if (lines[j].find("{") != std::string::npos) {
+                        ++braceDepth;
+                    }
+                    if (lines[j].find("}") != std::string::npos) {
+                        --braceDepth;
+                    }
+
+                    if (lines[j].find("return") != std::string::npos && braceDepth == 1) {
+                        std::cerr << "Found return statement on line " << j << ": " << lines[j] << std::endl;
+                        returnFound = true;
+                        std::string returnExpression = extractReturnExpression(lines, j);
+                        std::string returnType = contract.returnType->toString();
+                        std::cerr << "Return type for function " << functionName << ": " << returnType << std::endl;
+                        std::cerr << "Return expression: " << returnExpression << std::endl;
+
+                        if (!returnType.empty() && returnType.size() > 2 && returnType.substr(returnType.size() - 2) == "[]") {
+                            // Handle vector types (e.g., integer[])
+                            std::string baseType = returnType.substr(0, returnType.size() - 2);
+                            std::cerr << "Injecting type checks for vector return type: " << returnType << std::endl;
+                            outFile << "outputTypecheckExpression <- (" << returnExpression << ")\n";
+                            outFile << "if (!is.list(outputTypecheckExpression)) ";
+                            outFile << "stop('Output must be a list')\n";
+                            outFile << "if (!all(sapply(outputTypecheckExpression, is." << baseType << "))) ";
+                            outFile << "stop('All elements in the output list must be of type " << baseType << "')\n";
+                        } else {
+                            // Handle scalar types (e.g., integer, double, logical)
+                            std::cerr << "Injecting type checks for scalar return type: " << returnType << std::endl;
+                            outFile << "outputTypecheckExpression <- (" << returnExpression << ")\n";
+                            outFile << "if (!is." << returnType << "(outputTypecheckExpression)) ";
+                            outFile << "stop('Output must be of type " << returnType << "')\n";
+                        }
+                    }
+
+                    outFile << lines[j] << "\n";
+                    ++j;
+                }
+
+                if (!returnFound) {
+                    std::cerr << "Warning: No return statement found for function: " << functionName << std::endl;
                 }
 
                 // Skip to the end of the function block
-                i = j;
+                i = j - 1;
             } else {
                 std::cerr << "Warning: No contract found for function: " << functionName << std::endl;
                 outFile << lines[i] << "\n";
