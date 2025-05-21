@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <cerrno>
-#include <unistd.h> 
+#include <unistd.h>
 #include <sys/stat.h>
 #include <algorithm>
 #include <cctype>
@@ -23,38 +23,44 @@
 #include "typelang.h"
 #include "gensource.h"
 
-SEXP tokenizeRString(const char* code);
+SEXP tokenizeRString(const char *code);
 
-bool startsWith(const std::string& str, const char* prefix) {
-	size_t lenPrefix = std::strlen(prefix);
-	if (str.size() < lenPrefix) return false;
-	return std::strncmp(str.c_str(), prefix, lenPrefix) == 0;
+bool startsWith(const std::string &str, const char *prefix)
+{
+    size_t lenPrefix = std::strlen(prefix);
+    if (str.size() < lenPrefix)
+        return false;
+    return std::strncmp(str.c_str(), prefix, lenPrefix) == 0;
 }
 
-std::vector<ParseNode*> parseCheckExprFromString(const std::string& code) {
-	SEXP expr, status;
-	PROTECT(expr = Rf_mkString(code.c_str()));
+std::vector<ParseNode *> parseCheckExprFromString(const std::string &code)
+{
+    SEXP expr, status;
+    PROTECT(expr = Rf_mkString(code.c_str()));
 
-	ParseStatus parseStatus;
-	SEXP parsed = PROTECT(R_ParseVector(expr, -1, &parseStatus, R_NilValue));
+    ParseStatus parseStatus;
+    SEXP parsed = PROTECT(R_ParseVector(expr, -1, &parseStatus, R_NilValue));
 
-	if (parseStatus != PARSE_OK) {
-		UNPROTECT(2);
-		throw std::runtime_error("Failed to parse injected type check expression.");
-	}
+    if (parseStatus != PARSE_OK)
+    {
+        UNPROTECT(2);
+        throw std::runtime_error("Failed to parse injected type check expression.");
+    }
 
-	SEXP firstExpr = VECTOR_ELT(parsed, 0);
-	std::vector<ParseNode*> nodes = generateAST(firstExpr);
-	UNPROTECT(2);
-	return nodes;
+    SEXP firstExpr = VECTOR_ELT(parsed, 0);
+    std::vector<ParseNode *> nodes = generateAST(firstExpr);
+    UNPROTECT(2);
+    return nodes;
 }
 
-SEXP tokenizeRString(const char* code) {
+SEXP tokenizeRString(const char *code)
+{
     SEXP expr = PROTECT(Rf_mkString(code));
     ParseStatus parseStatus;
     SEXP parsed = PROTECT(R_ParseVector(expr, -1, &parseStatus, R_NilValue));
 
-    if (parseStatus != PARSE_OK) {
+    if (parseStatus != PARSE_OK)
+    {
         UNPROTECT(2);
         throw std::runtime_error("Failed to parse the provided R code.");
     }
@@ -63,30 +69,35 @@ SEXP tokenizeRString(const char* code) {
     return parsed;
 }
 
-std::vector<ParseNode*> generateASTFromSource(const std::string& code) {
+std::vector<ParseNode *> generateASTFromSource(const std::string &code)
+{
     SEXP tokens = tokenizeRString(code.c_str());
-    std::vector<ParseNode*> ast = generateAST(tokens);
+    std::vector<ParseNode *> ast = generateAST(tokens);
     return ast;
 }
 
-void run(const char* filename, const char* outputPath) {
+void run(const char *filename, const char *outputPath)
+{
     std::cout << "Starting parsing process for file: " << filename << std::endl;
 
     SEXP tokens = tokenizeRSource(filename);
-    if (!Rf_inherits(tokens, "data.frame")) {
+    if (!Rf_inherits(tokens, "data.frame"))
+    {
         std::cerr << "Error: tokenization did not return a data.frame." << std::endl;
         return;
     }
 
-    std::vector<ParseNode*> rootNodes = generateAST(tokens);
-    std::vector<ParseNode*> flatAST = flattenAST(rootNodes);
+    std::vector<ParseNode *> rootNodes = generateAST(tokens);
+    std::vector<ParseNode *> flatAST = flattenAST(rootNodes);
 
     TypeParser::functionContracts.clear();
 
     std::ifstream file(filename);
     std::string line;
-    while (std::getline(file, line)) {
-        if (!startsWith(line, "# @contract")) continue;
+    while (std::getline(file, line))
+    {
+        if (!startsWith(line, "# @contract"))
+            continue;
 
         std::string contractLine = line.substr(11);
         contractLine.erase(0, contractLine.find_first_not_of(" \t"));
@@ -99,35 +110,44 @@ void run(const char* filename, const char* outputPath) {
         std::getline(iss, typeExpr);
         typeExpr.erase(0, typeExpr.find_first_not_of(" \t"));
 
-        try {
+        try
+        {
             TypeParser parser(typeExpr);
-            FunctionType* funcType = dynamic_cast<FunctionType*>(parser.parseType());
-            if (funcType) {
+            FunctionType *funcType = dynamic_cast<FunctionType *>(parser.parseType());
+            if (funcType)
+            {
                 TypeParser::addFunctionContract(functionName, FunctionContract{
-                    .argTypes = funcType->arguments,
-                    .returnType = funcType->returnType
-                });
+                                                                  .argTypes = funcType->arguments,
+                                                                  .returnType = funcType->returnType});
             }
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e)
+        {
             std::cerr << "Contract parse error: " << e.what() << std::endl;
         }
     }
 
     std::cerr << "Available function contracts:\n";
-    for (const auto& [name, contract] : TypeParser::functionContracts) {
+    for (const auto &[name, contract] : TypeParser::functionContracts)
+    {
         std::cerr << "  " << name << "(";
-        for (const auto& arg : contract.argTypes) {
-            if (arg) std::cerr << arg->toString() << ", ";
+        for (const auto &arg : contract.argTypes)
+        {
+            if (arg)
+                std::cerr << arg->toString() << ", ";
         }
         std::cerr << ")\n";
     }
 
-    for (size_t i = 0; i + 4 < flatAST.size(); ++i) {
-        if (!flatAST[i]) continue;
+    for (size_t i = 0; i + 4 < flatAST.size(); ++i)
+    {
+        if (!flatAST[i])
+            continue;
 
         if (flatAST[i + 1]->text == "<-" &&
             flatAST[i + 2]->text == "function" &&
-            flatAST[i + 3]->text == "(") {
+            flatAST[i + 3]->text == "(")
+        {
 
             std::string funcName = flatAST[i]->text;
             funcName.erase(0, funcName.find_first_not_of(" \t\n\r"));
@@ -136,36 +156,44 @@ void run(const char* filename, const char* outputPath) {
             std::cerr << "Checking function: " << funcName << std::endl;
 
             auto it = TypeParser::functionContracts.find(funcName);
-            if (it == TypeParser::functionContracts.end()) {
+            if (it == TypeParser::functionContracts.end())
+            {
                 std::cerr << "No contract for function: " << funcName << std::endl;
                 continue;
             }
 
-            const FunctionContract& contract = it->second;
+            const FunctionContract &contract = it->second;
 
             std::vector<std::string> argNames;
             size_t j = i + 4;
-            while (j < flatAST.size() && flatAST[j] && flatAST[j]->text != ")") {
-                if (flatAST[j]->text != "," && !flatAST[j]->text.empty()) {
+            while (j < flatAST.size() && flatAST[j] && flatAST[j]->text != ")")
+            {
+                if (flatAST[j]->text != "," && !flatAST[j]->text.empty())
+                {
                     argNames.push_back(flatAST[j]->text);
                 }
                 ++j;
             }
-            if (j >= flatAST.size() || flatAST[j]->text != ")") continue;
+            if (j >= flatAST.size() || flatAST[j]->text != ")")
+                continue;
 
             size_t bodyStart = j + 1;
-            while (bodyStart < flatAST.size() && flatAST[bodyStart]->text != "{") {
+            while (bodyStart < flatAST.size() && flatAST[bodyStart]->text != "{")
+            {
                 ++bodyStart;
             }
-            if (bodyStart >= flatAST.size() || flatAST[bodyStart]->text != "{") continue;
+            if (bodyStart >= flatAST.size() || flatAST[bodyStart]->text != "{")
+                continue;
 
             ++bodyStart;
 
-            std::vector<std::vector<ParseNode*>> insertBlocks;
+            std::vector<std::vector<ParseNode *>> insertBlocks;
 
-            for (size_t k = 0; k < argNames.size() && k < contract.argTypes.size(); ++k) {
-                const Type* type = contract.argTypes[k];
-                if (!type) {
+            for (size_t k = 0; k < argNames.size() && k < contract.argTypes.size(); ++k)
+            {
+                const Type *type = contract.argTypes[k];
+                if (!type)
+                {
                     std::cerr << "Null type for argument " << argNames[k] << std::endl;
                     continue;
                 }
@@ -175,16 +203,20 @@ void run(const char* filename, const char* outputPath) {
 
                 std::string checkExpr = "if (!is." + typeStr + "(" + argNames[k] + ")) stop('Argument `" + argNames[k] + "` must be of type " + typeStr + "')";
 
-                std::vector<ParseNode*> checkNodes = generateASTFromSource(checkExpr);
-                if (checkNodes.empty()) {
+                std::vector<ParseNode *> checkNodes = generateASTFromSource(checkExpr);
+                if (checkNodes.empty())
+                {
                     std::cerr << "Failed to generate AST for check: " << checkExpr << std::endl;
-                } else {
+                }
+                else
+                {
                     std::cerr << "Successfully parsed type check for " << argNames[k] << std::endl;
                     insertBlocks.push_back(checkNodes);
                 }
             }
 
-            for (auto it = insertBlocks.rbegin(); it != insertBlocks.rend(); ++it) {
+            for (auto it = insertBlocks.rbegin(); it != insertBlocks.rend(); ++it)
+            {
                 flatAST.insert(flatAST.begin() + bodyStart, it->begin(), it->end());
             }
         }
@@ -193,30 +225,35 @@ void run(const char* filename, const char* outputPath) {
     std::vector<StatementRange> statementRanges = extractStatements(flatAST);
     std::vector<std::string> statementStrings = getStatementStrings(flatAST, statementRanges);
 
-    for (const auto& str : statementStrings) {
+    for (const auto &str : statementStrings)
+    {
         std::cerr << "Reassembled statement: " << str << std::endl;
     }
 
     std::cout << "Writing to file: " << outputPath << std::endl;
 
     int fd = open(outputPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    for (const auto& str : statementStrings) {
+    for (const auto &str : statementStrings)
+    {
         std::string line = str;
 
         line.erase(std::remove_if(line.begin(), line.end(), ::isspace), line.end());
 
-        if (line.find("return ") != std::string::npos) {
+        if (line.find("return ") != std::string::npos)
+        {
             line = std::regex_replace(line, std::regex("return\\s+([^;\\n]+)"), "return ( $1 )");
             line = "\n" + line + "\n";
         }
 
-        if (line.find("for(") != std::string::npos) {
+        if (line.find("for(") != std::string::npos)
+        {
             line = std::regex_replace(line, std::regex("([^{;\\n])\\s*for\\("), "$1\nfor (");
             line = std::regex_replace(line, std::regex("for\\((.*)\\)"), "for ( $1 )");
             line = "\n" + line + "\n";
         }
 
-        if (line.find("in") != std::string::npos) {
+        if (line.find("in") != std::string::npos)
+        {
             line = std::regex_replace(line, std::regex("\\b(in)\\b"), " $1 ");
         }
 
@@ -231,11 +268,13 @@ void run(const char* filename, const char* outputPath) {
         line = std::regex_replace(line, std::regex("}\\s*return"), "}\nreturn");
         line = std::regex_replace(line, std::regex("([a-zA-Z0-9_])\\s*\\+\\s*([a-zA-Z0-9_])"), "$1 + $2");
 
-        if (line.find("{") != std::string::npos && line.back() != '\n') {
+        if (line.find("{") != std::string::npos && line.back() != '\n')
+        {
             line += "\n";
         }
 
-        if (line.find("}") != std::string::npos && line.back() != '\n') {
+        if (line.find("}") != std::string::npos && line.back() != '\n')
+        {
             line += "\n";
         }
 
@@ -248,12 +287,14 @@ void run(const char* filename, const char* outputPath) {
     Rf_endEmbeddedR(0);
 }
 
-void injectInputTypeChecks(const char* outputPath) {
+void injectInputTypeChecks(const char *outputPath)
+{
     std::cout << "Injecting type checks into file: " << outputPath << std::endl;
 
     // Read the generated file
     std::ifstream file(outputPath);
-    if (!file.is_open()) {
+    if (!file.is_open())
+    {
         std::cerr << "Error: Failed to open file: " << outputPath << std::endl;
         return;
     }
@@ -262,25 +303,27 @@ void injectInputTypeChecks(const char* outputPath) {
     std::string line;
 
     // Read all lines from the file
-    while (std::getline(file, line)) {
+    while (std::getline(file, line))
+    {
         lines.push_back(line);
     }
     file.close();
 
     // Open the file for writing
     std::ofstream outFile(outputPath);
-    if (!outFile.is_open()) {
+    if (!outFile.is_open())
+    {
         std::cerr << "Error: Failed to open file for writing: " << outputPath << std::endl;
         return;
     }
 
     // Iterate over lines and inject stopifnot checks
-    for (size_t i = 0; i < lines.size(); ++i) {
-        outFile << lines[i] << "\n";
-
+    for (size_t i = 0; i < lines.size(); ++i)
+    {
         // Check if the line contains a function declaration
         std::smatch match;
-        if (std::regex_search(lines[i], match, std::regex("^(\\w+)\\s*<-\\s*function\\s*\\(([^)]*)\\)"))) {
+        if (std::regex_search(lines[i], match, std::regex("^(\\w+)\\s*<-\\s*function\\s*\\(([^)]*)\\)")))
+        {
             std::string functionName = match[1];
             std::string args = match[2];
             std::istringstream argStream(args);
@@ -288,24 +331,74 @@ void injectInputTypeChecks(const char* outputPath) {
 
             // Look for a contract for the function
             auto it = TypeParser::functionContracts.find(functionName);
-            if (it != TypeParser::functionContracts.end()) {
-                const FunctionContract& contract = it->second;
+            if (it != TypeParser::functionContracts.end())
+            {
+                const FunctionContract &contract = it->second;
 
-                // Extract argument names from the function declaration
-                size_t argIndex = 0;
-                while (std::getline(argStream, argName, ',')) {
-                    argName.erase(std::remove_if(argName.begin(), argName.end(), ::isspace), argName.end());
+                // Write the function declaration line
+                outFile << lines[i] << "\n";
 
-                    // Match argument names with their types from the contract
-                    if (argIndex < contract.argTypes.size() && contract.argTypes[argIndex]) {
-                        std::string argType = contract.argTypes[argIndex]->toString();
-                        outFile << "stopifnot(is." << argType << "(" << argName << "))\n";
+                // Check if the next line contains the opening brace
+                if (i + 1 < lines.size() && lines[i + 1].find("{") != std::string::npos)
+                {
+                    // Write the opening brace
+                    outFile << lines[i + 1] << "\n";
+                    ++i; // Skip the brace line
+
+                    // Extract argument names from the function declaration
+                    std::vector<std::string> argNames;
+                    std::istringstream argStream(args);
+                    std::string argName;
+                    while (std::getline(argStream, argName, ','))
+                    {
+                        argName.erase(0, argName.find_first_not_of(" \t"));
+                        argName.erase(argName.find_last_not_of(" \t") + 1);
+                        argNames.push_back(argName);
                     }
-                    ++argIndex;
+
+                    // Inject type checks immediately after the opening brace
+                    for (size_t j = 0; j < contract.argTypes.size(); ++j)
+                    {
+                        if (j < argNames.size() && contract.argTypes[j])
+                        {
+                            std::string argType = contract.argTypes[j]->toString();
+                            std::cerr << "Processing argument: " << argNames[j] << " with type: " << argType << std::endl;
+
+                            if (argType == "integer[]")
+                            {
+                                // Generate checks for integer lists
+                                std::cerr << "Generating checks for integer list: " << argNames[j] << std::endl;
+                                outFile << "stopifnot(is.list(" << argNames[j] << "))\n";
+                                outFile << "stopifnot(all(sapply(" << argNames[j] << ", is.integer)))\n";
+                            }
+                            else if (argType == "integer")
+                            {
+                                // Generate checks for single integers
+                                outFile << "stopifnot(is.integer(" << argNames[j] << "))\n";
+                            }
+                            else if (argType == "double")
+                            {
+                                // Generate checks for doubles
+                                outFile << "stopifnot(is.double(" << argNames[j] << "))\n";
+                            }
+                            else
+                            {
+                                // Handle other types
+                                outFile << "stopifnot(is." << argType << "(" << argNames[j] << "))\n";
+                            }
+                        }
+                    }
                 }
-            } else {
+            }
+            else
+            {
                 std::cerr << "Warning: No contract found for function: " << functionName << std::endl;
             }
+        }
+        else
+        {
+            // Write the current line to the output file
+            outFile << lines[i] << "\n";
         }
     }
 
@@ -313,53 +406,62 @@ void injectInputTypeChecks(const char* outputPath) {
     std::cout << "Type checks successfully injected into file: " << outputPath << std::endl;
 }
 
-bool fileExists(const char* path) {
-	struct stat buffer;
-	return stat(path, &buffer) == 0;
+bool fileExists(const char *path)
+{
+    struct stat buffer;
+    return stat(path, &buffer) == 0;
 }
 
-int main(int argc, char* argv[]) {
-    if (argc != 5) {
+int main(int argc, char *argv[])
+{
+    if (argc != 5)
+    {
         std::cerr << "Usage: " << argv[0] << " run <filename> -o <output path>" << std::endl;
         return 1;
     }
 
-    const char* commandFlag = argv[1];
-    const char* filename = argv[2];
-    const char* outputFlag = argv[3];
-    const char* outputPath = argv[4];
+    const char *commandFlag = argv[1];
+    const char *filename = argv[2];
+    const char *outputFlag = argv[3];
+    const char *outputPath = argv[4];
 
-    if (strcmp(commandFlag, "run") != 0) {
+    if (strcmp(commandFlag, "run") != 0)
+    {
         std::cerr << "Error: Unknown flag '" << commandFlag << "'" << std::endl;
         return 1;
     }
 
-    if (!fileExists(filename)) {
+    if (!fileExists(filename))
+    {
         std::cerr << "Error: File not found: " << filename << std::endl;
         return 1;
     }
 
-    if (strcmp(outputFlag, "-o") != 0) {
+    if (strcmp(outputFlag, "-o") != 0)
+    {
         std::cerr << "Error: Unknown flag '" << outputFlag << "'" << std::endl;
         return 1;
     }
 
-    if (std::getenv("R_HOME") == nullptr) {
+    if (std::getenv("R_HOME") == nullptr)
+    {
         setenv("R_HOME", "/usr/lib64/R", 1);
     }
 
     // Initialize R
     int r_argc = 2;
-    char* r_argv[] = {
-        const_cast<char*>("R"),
-        const_cast<char*>("--silent")
-    };
+    char *r_argv[] = {
+        const_cast<char *>("R"),
+        const_cast<char *>("--silent")};
     Rf_initEmbeddedR(r_argc, r_argv);
 
-    try {
+    try
+    {
         run(filename, outputPath);
         injectInputTypeChecks(outputPath); // Inject type checks into the generated file
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception &e)
+    {
         std::cerr << "Error: " << e.what() << std::endl;
         Rf_endEmbeddedR(0);
         return 1;
