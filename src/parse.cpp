@@ -19,7 +19,6 @@ SEXP tokenizeRSource(const char* filename) {
         const_cast<char*>("R"),
         const_cast<char*>("--silent")
     };
-    Rf_initEmbeddedR(r_argc, r_argv);
 
     FILE* file = fopen(filename, "r");
     if (!file) {

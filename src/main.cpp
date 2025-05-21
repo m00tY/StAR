@@ -248,7 +248,70 @@ void run(const char* filename, const char* outputPath) {
     Rf_endEmbeddedR(0);
 }
 
+void injectInputTypeChecks(const char* outputPath) {
+    std::cout << "Injecting type checks into file: " << outputPath << std::endl;
 
+    // Read the generated file
+    std::ifstream file(outputPath);
+    if (!file.is_open()) {
+        std::cerr << "Error: Failed to open file: " << outputPath << std::endl;
+        return;
+    }
+
+    std::vector<std::string> lines;
+    std::string line;
+
+    // Read all lines from the file
+    while (std::getline(file, line)) {
+        lines.push_back(line);
+    }
+    file.close();
+
+    // Open the file for writing
+    std::ofstream outFile(outputPath);
+    if (!outFile.is_open()) {
+        std::cerr << "Error: Failed to open file for writing: " << outputPath << std::endl;
+        return;
+    }
+
+    // Iterate over lines and inject stopifnot checks
+    for (size_t i = 0; i < lines.size(); ++i) {
+        outFile << lines[i] << "\n";
+
+        // Check if the line contains a function declaration
+        std::smatch match;
+        if (std::regex_search(lines[i], match, std::regex("^(\\w+)\\s*<-\\s*function\\s*\\(([^)]*)\\)"))) {
+            std::string functionName = match[1];
+            std::string args = match[2];
+            std::istringstream argStream(args);
+            std::string argName;
+
+            // Look for a contract for the function
+            auto it = TypeParser::functionContracts.find(functionName);
+            if (it != TypeParser::functionContracts.end()) {
+                const FunctionContract& contract = it->second;
+
+                // Extract argument names from the function declaration
+                size_t argIndex = 0;
+                while (std::getline(argStream, argName, ',')) {
+                    argName.erase(std::remove_if(argName.begin(), argName.end(), ::isspace), argName.end());
+
+                    // Match argument names with their types from the contract
+                    if (argIndex < contract.argTypes.size() && contract.argTypes[argIndex]) {
+                        std::string argType = contract.argTypes[argIndex]->toString();
+                        outFile << "stopifnot(is." << argType << "(" << argName << "))\n";
+                    }
+                    ++argIndex;
+                }
+            } else {
+                std::cerr << "Warning: No contract found for function: " << functionName << std::endl;
+            }
+        }
+    }
+
+    outFile.close();
+    std::cout << "Type checks successfully injected into file: " << outputPath << std::endl;
+}
 
 bool fileExists(const char* path) {
 	struct stat buffer;
@@ -256,35 +319,54 @@ bool fileExists(const char* path) {
 }
 
 int main(int argc, char* argv[]) {
-	if (argc != 5) {
-		std::cerr << "Usage: " << argv[0] << " run <filename> -o <output path>" << std::endl;
-		return 1;
-	}
+    if (argc != 5) {
+        std::cerr << "Usage: " << argv[0] << " run <filename> -o <output path>" << std::endl;
+        return 1;
+    }
 
-	const char* commandFlag = argv[1];
-	const char* filename = argv[2];
-	const char* outputFlag = argv[3];
-	const char* outputPath = argv[4];
+    const char* commandFlag = argv[1];
+    const char* filename = argv[2];
+    const char* outputFlag = argv[3];
+    const char* outputPath = argv[4];
 
-	if (strcmp(commandFlag, "run") != 0) {
-		std::cerr << "Error: Unknown flag '" << commandFlag << "'" << std::endl;
-		return 1;
-	}
+    if (strcmp(commandFlag, "run") != 0) {
+        std::cerr << "Error: Unknown flag '" << commandFlag << "'" << std::endl;
+        return 1;
+    }
 
-	if (!fileExists(filename)) {
-		std::cerr << "Error: File not found: " << filename << std::endl;
-		return 1;
-	}
+    if (!fileExists(filename)) {
+        std::cerr << "Error: File not found: " << filename << std::endl;
+        return 1;
+    }
 
-	if (strcmp(outputFlag, "-o") != 0) {
-		std::cerr << "Error: Unknown flag '" << outputFlag << "'" << std::endl;
-		return 1;
-	}
+    if (strcmp(outputFlag, "-o") != 0) {
+        std::cerr << "Error: Unknown flag '" << outputFlag << "'" << std::endl;
+        return 1;
+    }
 
-	if (std::getenv("R_HOME") == nullptr) {
-		setenv("R_HOME", "/usr/lib64/R", 1);
-	}
+    if (std::getenv("R_HOME") == nullptr) {
+        setenv("R_HOME", "/usr/lib64/R", 1);
+    }
 
-	run(filename, outputPath);
-	return 0;
+    // Initialize R
+    int r_argc = 2;
+    char* r_argv[] = {
+        const_cast<char*>("R"),
+        const_cast<char*>("--silent")
+    };
+    Rf_initEmbeddedR(r_argc, r_argv);
+
+    try {
+        run(filename, outputPath);
+        injectInputTypeChecks(outputPath); // Inject type checks into the generated file
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        Rf_endEmbeddedR(0);
+        return 1;
+    }
+
+    // Shutdown R
+    Rf_endEmbeddedR(0);
+
+    return 0;
 }
