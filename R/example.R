@@ -17,7 +17,7 @@ h <- function(L) {
 	return (sum)
 }
 
-f(1, 2)
+f(1L, 2L)
 
 f(2, 3.5)
 
