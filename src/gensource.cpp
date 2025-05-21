@@ -196,8 +196,9 @@ void generateOutputTypeChecks(const char *outputPath) {
                 // Write the function declaration line
                 outFile << lines[i] << "\n";
 
-                // Inject return type checks
-                for (size_t j = i + 1; j < lines.size(); ++j) {
+                // Process the function block
+                size_t j = i + 1;
+                while (j < lines.size() && lines[j].find("}") == std::string::npos) {
                     if (lines[j].find("return") != std::string::npos) {
                         std::string returnExpression = extractReturnExpression(lines[j]);
                         std::string returnType = contract.returnType->toString();
@@ -207,7 +208,16 @@ void generateOutputTypeChecks(const char *outputPath) {
                         outFile << "stop('Output must be of type " << returnType << "')\n";
                     }
                     outFile << lines[j] << "\n";
+                    ++j;
                 }
+
+                // Write the closing brace
+                if (j < lines.size()) {
+                    outFile << lines[j] << "\n";
+                }
+
+                // Skip to the end of the function block
+                i = j;
             } else {
                 std::cerr << "Warning: No contract found for function: " << functionName << std::endl;
                 outFile << lines[i] << "\n";
