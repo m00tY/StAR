@@ -1,5 +1,5 @@
 # @contract generate_data (numeric) -> dataframe
-generate_data <- function(n = 100) {
+generate_data <- function(n) {
   data.frame(
     id = 1:n,
     age = round(runif(n, 18, 70)),
@@ -34,7 +34,7 @@ plot_income_distribution <- function(df) {
 }
 
 main <- function() {
-  raw_data <- generate_data()
+  raw_data <- generate_data(100)
   cat("Generated", nrow(raw_data), "rows\n")
   
   clean <- clean_data(raw_data)

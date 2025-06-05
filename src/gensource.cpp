@@ -69,6 +69,22 @@ std::vector<std::string> getStatementStrings(const std::vector<ParseNode*> nodes
     return result;
 }
 
+std::vector<std::string> preprocessLines(const std::vector<std::string>& lines) {
+    std::vector<std::string> processedLines;
+    for (const auto& line : lines) {
+        std::istringstream stream(line);
+        std::string statement;
+        while (std::getline(stream, statement, ';')) { // Split by semicolon
+            statement.erase(0, statement.find_first_not_of(" \t")); // Trim leading whitespace
+            statement.erase(statement.find_last_not_of(" \t") + 1); // Trim trailing whitespace
+            if (!statement.empty()) {
+                processedLines.push_back(statement); // Add the statement to the processed lines
+            }
+        }
+    }
+    return processedLines;
+}
+
 void injectInputTypeChecks(const char *outputPath) {
     std::cout << "Injecting type checks into file: " << outputPath << std::endl;
 
@@ -86,6 +102,8 @@ void injectInputTypeChecks(const char *outputPath) {
     }
     file.close();
 
+    lines = preprocessLines(lines);
+
     std::ofstream outFile(outputPath);
     if (!outFile.is_open()) {
         std::cerr << "Error: Failed to open file for writing: " << outputPath << std::endl;
@@ -102,16 +120,18 @@ void injectInputTypeChecks(const char *outputPath) {
             if (it != TypeParser::functionContracts.end()) {
                 const FunctionContract &contract = it->second;
 
+                // Write the function declaration line
                 outFile << lines[i] << "\n";
 
+                // Process the function arguments
                 while (i + 1 < lines.size() && lines[i + 1].find("{") == std::string::npos) {
                     outFile << lines[++i] << "\n";
                     args += lines[i];
                 }
 
+                // Write the opening brace
                 if (i + 1 < lines.size() && lines[i + 1].find("{") != std::string::npos) {
-                    outFile << lines[i + 1] << "\n";
-                    ++i;
+                    outFile << lines[++i] << "\n";
 
                     std::vector<std::string> argNames;
                     std::istringstream argStream(args);
@@ -125,10 +145,11 @@ void injectInputTypeChecks(const char *outputPath) {
                     for (size_t j = 0; j < contract.argTypes.size(); ++j) {
                         if (j < argNames.size() && contract.argTypes[j]) {
                             std::string argType = contract.argTypes[j]->toString();
-                            std::cerr << "argType: " << argType << std::endl;
-                            if (!argType.empty() && argType.size() > 2 && argType.substr(argType.size() - 2) == "[]") {
+                            if (argType == "dataframe") {
+                                outFile << "stopifnot(is.data.frame(" << argNames[j] << "))\n";
+                            } else if (!argType.empty() && argType.size() > 2 && argType.substr(argType.size() - 2) == "[]") {
                                 std::string baseType = argType.substr(0, argType.size() - 2);
-                                outFile << "stopifnot(is.list(" << argNames[j] << "))\n";
+                                outFile << "stopifnot(is.vector(" << argNames[j] << "))\n";
                                 outFile << "stopifnot(all(sapply(" << argNames[j] << ", is." << baseType << ")))\n";
                             } else {
                                 outFile << "stopifnot(is." << argType << "(" << argNames[j] << "))\n";
@@ -138,6 +159,7 @@ void injectInputTypeChecks(const char *outputPath) {
                 }
             } else {
                 std::cerr << "Warning: No contract found for function: " << functionName << std::endl;
+                outFile << lines[i] << "\n";
             }
         } else {
             outFile << lines[i] << "\n";
@@ -171,9 +193,25 @@ std::string extractReturnExpression(const std::vector<std::string>& lines, size_
         // Trim any trailing whitespace
         returnExpression.erase(returnExpression.find_last_not_of(" \t\n\r") + 1);
 
+        // Ensure balanced parentheses and braces
+        size_t openParenCount = std::count(returnExpression.begin(), returnExpression.end(), '(');
+        size_t closeParenCount = std::count(returnExpression.begin(), returnExpression.end(), ')');
+        size_t openBraceCount = std::count(returnExpression.begin(), returnExpression.end(), '{');
+        size_t closeBraceCount = std::count(returnExpression.begin(), returnExpression.end(), '}');
+
+        while (closeParenCount < openParenCount) {
+            returnExpression += ")";
+            ++closeParenCount;
+        }
+        while (closeBraceCount < openBraceCount) {
+            returnExpression += "}";
+            ++closeBraceCount;
+        }
+
         std::cerr << "Extracted return expression: " << returnExpression << std::endl;
         return returnExpression;
     }
+
     std::cerr << "No return expression found on line: " << returnLineIndex << std::endl;
     return "";
 }
@@ -195,6 +233,8 @@ void generateOutputTypeChecks(const char *outputPath) {
     }
     file.close();
 
+    lines = preprocessLines(lines);
+
     std::ofstream outFile(outputPath, std::ios::out);
     if (!outFile.is_open()) {
         std::cerr << "Error: Failed to open file for writing: " << outputPath << std::endl;
@@ -205,87 +245,60 @@ void generateOutputTypeChecks(const char *outputPath) {
         std::smatch match;
         if (std::regex_search(lines[i], match, std::regex("^(\\w+)\\s*<-\\s*function\\s*\\(([^)]*)\\)"))) {
             std::string functionName = match[1];
-            std::cerr << "Processing function: " << functionName << std::endl;
 
-            // Look for a contract for the function
+            outFile << lines[i] << "\n";
+
             auto it = TypeParser::functionContracts.find(functionName);
             if (it != TypeParser::functionContracts.end()) {
                 const FunctionContract &contract = it->second;
-                std::cerr << "Found contract for function: " << functionName << std::endl;
 
-                // Write the function declaration line
-                outFile << lines[i] << "\n";
-
-                // Process the function block
                 size_t j = i + 1;
                 bool returnFound = false;
-                int braceDepth = 0;
 
-                // Find the opening brace of the function
                 while (j < lines.size() && lines[j].find("{") == std::string::npos) {
                     outFile << lines[j] << "\n";
                     ++j;
                 }
 
                 if (j < lines.size() && lines[j].find("{") != std::string::npos) {
-                    ++braceDepth; // Entering the function block
                     outFile << lines[j] << "\n";
                     ++j;
                 }
 
-                while (j < lines.size() && braceDepth > 0) {
-                    std::cerr << "Inspecting line " << j << ": " << lines[j] << std::endl;
-
-                    // Adjust brace depth
-                    if (lines[j].find("{") != std::string::npos) {
-                        ++braceDepth;
-                    }
-                    if (lines[j].find("}") != std::string::npos) {
-                        --braceDepth;
-                    }
-
-                    if (lines[j].find("return") != std::string::npos && braceDepth == 1) {
-                        std::cerr << "Found return statement on line " << j << ": " << lines[j] << std::endl;
+                while (j < lines.size()) {
+                    if (lines[j].find("return") != std::string::npos) {
                         returnFound = true;
                         std::string returnExpression = extractReturnExpression(lines, j);
                         std::string returnType = contract.returnType->toString();
-                        std::cerr << "Return type for function " << functionName << ": " << returnType << std::endl;
-                        std::cerr << "Return expression: " << returnExpression << std::endl;
 
-                        if (!returnType.empty() && returnType.size() > 2 && returnType.substr(returnType.size() - 2) == "[]") {
-                            // Handle vector types (e.g., integer[])
+                        // Ensure balanced parentheses in the return expression
+                        returnExpression = returnExpression;
+
+                        if (returnType == "dataframe") {
+                            outFile << "outputTypecheckExpression <- " << returnExpression << "\n";
+                            outFile << "if (!is.data.frame(outputTypecheckExpression)) stop('Output must be a data frame')\n";
+                        } else if (returnType.size() > 2 && returnType.substr(returnType.size() - 2) == "[]") {
                             std::string baseType = returnType.substr(0, returnType.size() - 2);
-                            std::cerr << "Injecting type checks for vector return type: " << returnType << std::endl;
-                            outFile << "outputTypecheckExpression <- (" << returnExpression << ")\n";
-                            outFile << "if (!is.list(outputTypecheckExpression)) ";
-                            outFile << "stop('Output must be a list')\n";
-                            outFile << "if (!all(sapply(outputTypecheckExpression, is." << baseType << "))) ";
-                            outFile << "stop('All elements in the output list must be of type " << baseType << "')\n";
+                            outFile << "outputTypecheckExpression <- " << returnExpression << "\n";
+                            outFile << "if (!is.list(outputTypecheckExpression)) stop('Output must be a list')\n";
+                            outFile << "if (!all(sapply(outputTypecheckExpression, is." << baseType << "))) stop('All elements in the output list must be of type " << baseType << "')\n";
                         } else {
-                            // Handle scalar types (e.g., integer, double, logical)
-                            std::cerr << "Injecting type checks for scalar return type: " << returnType << std::endl;
-                            outFile << "outputTypecheckExpression <- (" << returnExpression << ")\n";
-                            outFile << "if (!is." << returnType << "(outputTypecheckExpression)) ";
-                            outFile << "stop('Output must be of type " << returnType << "')\n";
+                            outFile << "outputTypecheckExpression <- " << returnExpression << "\n";
+                            outFile << "if (!is." << returnType << "(outputTypecheckExpression)) stop('Output must be of type " << returnType << "')\n";
                         }
+
+                        outFile << "return(outputTypecheckExpression)\n";
+                        ++j;
+                        continue;
                     }
 
                     outFile << lines[j] << "\n";
                     ++j;
                 }
 
-                if (!returnFound) {
-                    std::cerr << "Warning: No return statement found for function: " << functionName << std::endl;
-                }
-
-                // Skip to the end of the function block
                 i = j - 1;
-            } else {
-                std::cerr << "Warning: No contract found for function: " << functionName << std::endl;
-                outFile << lines[i] << "\n";
             }
         } else {
-            // Write the current line to the output file
             outFile << lines[i] << "\n";
         }
     }
